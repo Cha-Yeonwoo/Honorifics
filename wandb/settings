@@ -1,0 +1,5 @@
+[default]
+entity = ywyw
+project = honorifics
+base_url = https://api.wandb.ai
+
