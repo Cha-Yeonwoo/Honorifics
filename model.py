@@ -14,25 +14,34 @@ class TransformerEncoder(nn.Module):
         
         # Output projection layer to get desired output dimension (length 3)
         self.output_layer = nn.Linear(embed_dim, output_dim)
+        
     
     def forward(self, x):
         # x: (batch_size, seq_length) -> token indices
 
         # Embedding: (batch_size, seq_length, embed_dim)
+        x = x.squeeze(1)
         x = self.embedding(x)
+   
 
-        x = x.mean(dim=2) 
+        # x = x.mean(dim=2) 
+        # print(x.shape)
 
         # Transformer expects (seq_length, batch_size, embed_dim)
         x = x.permute(1, 0, 2)
+
+        # print(x.shape)
         
         # Encoder output: (seq_length, batch_size, embed_dim)
         x = self.encoder(x)
 
         # Project to desired output dimension
         x = self.output_layer(x)  # (seq_length, batch_size, output_dim)
+        # print(x.shape)
         
         # Permute back to (batch_size, seq_length, output_dim)
         x = x.permute(1, 0, 2)
+
+        x = x.mean(dim=1)
         
         return x  # (batch_size, seq_length, output_dim)

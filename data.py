@@ -15,22 +15,28 @@ def collate_fn(batch):
     if len(texts[0].shape) == 1:  # 단일 차원 [seq_len]일 경우
         padded_texts = pad_sequence([torch.tensor(t) for t in texts], batch_first=True, padding_value=0)
     else:  # 다차원 [seq_len, embed_dim]일 경우
-        max_len = max([t.size(1) for t in texts])
+        max_len1 = max([t.size(1) for t in texts])
         padded_texts = torch.stack([
-            torch.nn.functional.pad(t, (0, max_len - t.size(1)), "constant", 0) for t in texts
+            torch.nn.functional.pad(t, (0, max_len1 - t.size(1)), "constant", 0) for t in texts
         ])
+
+        max_len2 = max([t.size(1) for t in scores])
+        padded_scores = torch.stack([
+            torch.nn.functional.pad(t, (0, max_len2 - t.size(1)), "constant", 0) for t in scores
+        ])
+
 
         # for t in texts:
         #     a=torch.nn.functional.pad(t, (0, max_len - t.size(1)), "constant", 0) 
-        #     print(a.shape)
+            # print(a.shape)
 
     # scores는 별도의 패딩 필요 없음
-    scores = torch.stack(scores)
+    # scores = torch.stack(scores)
     
-    return padded_texts, scores
+    return padded_texts, padded_scores #scores
 
 class KoreanTextDataset(Dataset):
-    def __init__(self, data, tokenizer='BERT'):
+    def __init__(self, data, tokenizer='EXAONE'):
         self.korean_text = data['Korean'].values  #
         self.scores = data['score'].values         
         self.tokenizer = tokenizer 
@@ -82,3 +88,43 @@ if __name__ == "__main__":
     print(len(data_loader))
     a = iter(data_loader)
   
+
+
+class EnKoDataset(Dataset):
+    def __init__(self, data, tokenizer):
+        self.korean_text = data['Korean'].values  #
+        self.english_text = data['English'].values         
+        self.tokenizer = tokenizer 
+
+        self.input_ids = tokenizer
+
+    def __len__(self):
+        return len(self.korean_text)
+
+    def __getitem__(self, idx):
+
+        prompt = f"""다음 문장을 한국어로 번역해줘.
+            {self.korean_text[idx]}
+
+            '다음은 번역 결과입니다.'같은 말 넣지 말고 그냥 번역한 문장만 출력해줘."""
+
+        messages = [
+            {"role": "system", "content": "You are a translator that translates from English to Korean."},
+            {"role": "user", "content": prompt}
+        ]
+
+        input_ids = self.tokenizer.apply_chat_template(
+            messages,
+            tokenize=True,
+            add_generation_prompt=True,
+            return_tensors="pt"
+        ) # en
+
+        output_ids = torch.tensor(self.tokenizer.encode(self.english_text[idx])).unsqueeze(0) # ko
+
+        # korean_text = self.korean_text[idx]
+        # score = torch.tensor(self.scores[idx]) # dtype=torch.int
+        # english_text = self.english_text[idx]
+        # tokenized_text = return_tokenize_with_transformers(korean_text, self.tokenizer)
+        # return korean_text, score
+        return input_ids, output_ids

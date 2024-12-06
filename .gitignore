@@ -1,0 +1,9 @@
+log/
+log_BERT/
+*.ipynb
+
+*.pth
+*.safetensors
+
+*.pyc
+*.pt

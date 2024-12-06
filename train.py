@@ -1,3 +1,6 @@
+import os
+os.environ["CUDA_VISIBLE_DEVICES"]="0"
+
 import torch
 import torch.nn as nn
 import torch.optim as optim
@@ -23,7 +26,7 @@ def compute_class_weights(labels, num_classes):
 
 def parse_args():
     parser = argparse.ArgumentParser(description="Train Transformer Encoder with Imbalanced Data")
-    parser.add_argument('--input_dim', type=int, default=50000, help='Vocabulary size for token embedding')
+    parser.add_argument('--input_dim', type=int, default=200000, help='Vocabulary size for token embedding')
     parser.add_argument('--embed_dim', type=int, default=64, help='Embedding dimension size')
     parser.add_argument('--n_heads', type=int, default=4, help='Number of attention heads')
     parser.add_argument('--ff_dim', type=int, default=128, help='Feedforward dimension size')
@@ -33,6 +36,8 @@ def parse_args():
     parser.add_argument('--learning_rate', type=float, default=0.001, help='Learning rate')
     parser.add_argument('--num_epochs', type=int, default=10, help='Number of training epochs')
     parser.add_argument('--wandb_project', type=str, default="Honorifics", help='WandB project name')
+    parser.add_argument('--exp_name', type=str, default="Honorific_exp", help='WandB project name')
+    parser.add_argument('--checkpoint_dir', type=str, default="./log_EXAONE", help='Directory to save model checkpoints')
     return parser.parse_args()
 
 
@@ -59,7 +64,7 @@ def train():
     learning_rate = args.learning_rate
     num_epochs = args.num_epochs
     
-    wandb.init(project=args.wandb_project, name="Honorific exp")
+    wandb.init(project=args.wandb_project, name=args.exp_name)
     wandb.config.update(args)
 
     data = pd.read_csv('./refined_data/completed_output_pair_A.csv') 
@@ -75,7 +80,7 @@ def train():
         ff_dim=args.ff_dim,
         num_layers=args.num_layers,
         output_dim=args.output_dim
-    )
+    ).cuda()
 
     print_model_info(model)  # 모델 정보 출력
 
@@ -86,6 +91,9 @@ def train():
     criterion = nn.CrossEntropyLoss()
     optimizer = optim.Adam(model.parameters(), lr=learning_rate)
     step = 0
+    if not os.path.exists(args.checkpoint_dir):
+        os.makedirs(args.checkpoint_dir)
+
     for epoch in range(num_epochs):
         model.train()
         running_loss = 0.0
@@ -93,24 +101,26 @@ def train():
         total = 0
         
         for inputs, targets in tqdm(train_loader):
+            inputs, targets = inputs.cuda(), targets.cuda()
             optimizer.zero_grad()
             
             outputs = model(inputs)
             step+=1
             
             # CrossEntropyLoss에 맞게 출력 차원 조정
-            outputs = outputs.view(-1, num_classes)  # (batch_size * seq_length, num_classes)
-            targets = targets.view(-1)  # (batch_size * seq_length,)
+            outputs = outputs.reshape(-1, num_classes)  # (batch_size, num_classes)
+            targets = targets.reshape(-1)  # (batch_size , )
+            # print(outputs.shape)
+            # print(targets.shape)
             
             # 손실 계산 및 역전파
-            loss = criterion(outputs, targets)
-            loss.backward()
+            train_loss = criterion(outputs, targets)
+            train_loss.backward()
             optimizer.step()
 
-            wandb.log({"train/loss": loss.item()})
-            
-            # 통계 기록
-            running_loss += loss.item() * inputs.size(0)
+            wandb.log({"train/loss": train_loss.item()})
+
+            running_loss += train_loss.item() * inputs.size(0)
             _, predicted = torch.max(outputs, 1)
             correct += (predicted == targets).sum().item()
             total += targets.size(0)
@@ -126,9 +136,12 @@ def train():
 
         with torch.no_grad():
             for inputs, targets in tqdm(val_loader):
+                inputs, targets = inputs.cuda(), targets.cuda()
                 outputs = model(inputs)
-                outputs = outputs.view(-1, args.output_dim)
-                targets = targets.view(-1)
+                # outputs = outputs.view(-1, args.output_dim)
+                # targets = targets.view(-1)
+                outputs = outputs.reshape(-1, num_classes)  # (batch_size, num_classes)
+                targets = targets.reshape(-1) 
                 
                 loss = criterion(outputs, targets)
                 val_loss += loss.item() * inputs.size(0)
@@ -149,6 +162,18 @@ def train():
         print(f"Epoch [{epoch+1}/{args.num_epochs}], "
               f"Train Loss: {train_loss:.4f}, Train Accuracy: {train_accuracy:.2f}%, "
               f"Val Loss: {val_loss:.4f}, Val Accuracy: {val_accuracy:.2f}%")
+              
+        checkpoint_path = os.path.join(args.checkpoint_dir, f"model_epoch_{epoch+1}.pth")
+        torch.save({
+            'epoch': epoch + 1,
+            'model_state_dict': model.state_dict(),
+            'optimizer_state_dict': optimizer.state_dict(),
+            'train_loss': epoch_loss,
+            'train_accuracy': train_accuracy,
+            'val_loss': val_loss,
+            'val_accuracy': val_accuracy
+        }, checkpoint_path)
+        print(f"Checkpoint saved at {checkpoint_path}")
 
 
 

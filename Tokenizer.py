@@ -52,7 +52,8 @@ def return_tokenize_with_transformers(input_text, model='BERT'):
         "GPT-2": AutoTokenizer.from_pretrained("gpt2"),
         "BERT": AutoTokenizer.from_pretrained("bert-base-uncased"),
         "DistilBERT": AutoTokenizer.from_pretrained("distilbert-base-uncased"),
-        "RoBERTa": AutoTokenizer.from_pretrained("roberta-base")
+        "RoBERTa": AutoTokenizer.from_pretrained("roberta-base"),
+        "EXAONE": AutoTokenizer.from_pretrained("./ckpts")
     }
 
     tokenizer = tokenizers[model]
@@ -64,8 +65,8 @@ def return_tokenize_with_transformers(input_text, model='BERT'):
 
 if __name__ == "__main__":
     print("Tokenization using Hugging Face Transformers:")
-    tokenize_with_transformers()
+    # tokenize_with_transformers()
     
     # print("\nTokenization using OpenAI API:")
     # tokenize_with_openai()
-    # print(return_tokenize_with_openai('안녕하세요. NLP 과제중입니다.', model='BERT'))
+    print(return_tokenize_with_transformers('안녕하세요. NLP 과제중입니다.', model='BERT'))
