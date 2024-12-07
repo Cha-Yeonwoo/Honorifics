@@ -25,6 +25,15 @@ def collate_fn(batch):
             torch.nn.functional.pad(t, (0, max_len2 - t.size(1)), "constant", 0) for t in scores
         ])
 
+        padded_texts = torch.clamp(padded_texts, max=200000-1)
+        padded_scores = torch.clamp(padded_scores, max=200000-1)
+
+        if padded_texts.size(1) > 30:
+            padded_texts = padded_texts[:, :30]
+
+        if padded_scores.size(1) > 30:
+            padded_scores = padded_scores[:, :30]
+
 
         # for t in texts:
         #     a=torch.nn.functional.pad(t, (0, max_len - t.size(1)), "constant", 0) 
@@ -33,7 +42,7 @@ def collate_fn(batch):
     # scores는 별도의 패딩 필요 없음
     # scores = torch.stack(scores)
     
-    return padded_texts, padded_scores #scores
+    return padded_texts, padded_scores  # or #scores
 
 class KoreanTextDataset(Dataset):
     def __init__(self, data, tokenizer='EXAONE'):
@@ -50,12 +59,14 @@ class KoreanTextDataset(Dataset):
 
 
     def __len__(self):
-        return len(self.korean_text)
+        return len(self.korean_text)-1
 
     def __getitem__(self, idx):
-        korean_text = self.korean_text[idx]
+        korean_text = self.korean_text[idx] # + self.korean_text[idx+1]
         score = torch.tensor(self.scores[idx]) # dtype=torch.int
         tokenized_text = return_tokenize_with_transformers(korean_text, self.tokenizer)
+
+        # print(korean_text)
         # return korean_text, score
         return tokenized_text, score
 
@@ -71,9 +82,9 @@ def prepare_dataloader(dataset):
     test_dataset = Subset(dataset, test_idx)
 
     # 각각의 데이터셋에 대해 DataLoader 생성
-    train_loader = DataLoader(train_dataset, batch_size=32, shuffle=True,  collate_fn=collate_fn)
-    val_loader = DataLoader(val_dataset, batch_size=32, shuffle=False,  collate_fn=collate_fn)
-    test_loader = DataLoader(test_dataset, batch_size=32, shuffle=False,  collate_fn=collate_fn)
+    train_loader = DataLoader(train_dataset, batch_size=16, shuffle=True,  collate_fn=collate_fn)
+    val_loader = DataLoader(val_dataset, batch_size=16, shuffle=False,  collate_fn=collate_fn)
+    test_loader = DataLoader(test_dataset, batch_size=16, shuffle=False,  collate_fn=collate_fn)
 
     return train_loader, val_loader, test_loader
 
@@ -81,7 +92,7 @@ def prepare_dataloader(dataset):
 
 
 if __name__ == "__main__":
-    data = pd.read_csv('./refined_data/output_pair_A.csv')  # 'your_data.csv'를 실제 파일명으로 바꿔주세요
+    data = pd.read_csv('./refined_data/output_pair_A.csv')  
     dataset = KoreanTextDataset(data)
     data_loader = DataLoader(dataset, batch_size=32, shuffle=True)  # 배치 크기와 셔플 여부 설정
 
@@ -103,10 +114,10 @@ class EnKoDataset(Dataset):
 
     def __getitem__(self, idx):
 
-        prompt = f"""다음 문장을 한국어로 번역해줘.
-            {self.korean_text[idx]}
+        prompt = f"""한국어로 번역.
+            {self.english_text[idx]}"""
 
-            '다음은 번역 결과입니다.'같은 말 넣지 말고 그냥 번역한 문장만 출력해줘."""
+            #'다음은 번역 결과입니다.'같은 말 넣지 말고 그냥 번역한 문장만 출력해줘."""
 
         messages = [
             {"role": "system", "content": "You are a translator that translates from English to Korean."},
@@ -127,4 +138,11 @@ class EnKoDataset(Dataset):
         # english_text = self.english_text[idx]
         # tokenized_text = return_tokenize_with_transformers(korean_text, self.tokenizer)
         # return korean_text, score
+        # if output_ids.size(1)>30:
+        #     output_ids = output_ids[:, :30]
+
+        if input_ids.size(1)>10:
+  
+            input_ids = input_ids[:, -10:]
+
         return input_ids, output_ids

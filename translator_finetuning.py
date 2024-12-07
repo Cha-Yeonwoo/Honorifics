@@ -11,19 +11,23 @@ import argparse
 from data import EnKoDataset, prepare_dataloader
 from model import TransformerEncoder
 
+from peft import LoraConfig, get_peft_model
+
+
 parser = argparse.ArgumentParser(description="Fine-tune EXAONE")
 
 
 
 parser.add_argument('--exp_name', type=str, default="trans_exp", help='WandB project name')
 parser.add_argument('--checkpoint_dir', type=str, default="./log_trans", help='Directory to save model checkpoints')
+parser.add_argument('--Lora', action='store_true', help="Enable the feature") 
 
 args = parser.parse_args()
 
 # WandB 초기화
 wandb.init(project="honorifics", name=args.exp_name, config={
     "learning_rate": 2e-5,
-    "batch_size": 32,
+    "batch_size": 16,
     "num_epochs": 3
 })
 
@@ -35,10 +39,10 @@ device = torch.device("cuda") if torch.cuda.is_available() else torch.device("cp
 # 모델 불러오기
 tokenizer = AutoTokenizer.from_pretrained("./ckpts")
 model = AutoModelForCausalLM.from_pretrained("./ckpts")
-model.to(device)
+# model.to(device)
 
 Honorific_model = TransformerEncoder(input_dim=200000)
-Honorific_model.load_state_dict(torch.load('/home/elicer/Honorifics/log_EXAONE/model_epoch_10.pth')['model_state_dict'])
+Honorific_model.load_state_dict(torch.load('/home/elicer/Honorifics/log_EXAONE/model_epoch_1.pth')['model_state_dict'])
 
 data = pd.read_csv('./refined_data/completed_output_pair_A.csv') 
 dataset = EnKoDataset(data, tokenizer)
@@ -69,6 +73,32 @@ Honorific_model = Honorific_model.cuda()
 if not os.path.exists(args.checkpoint_dir):
     os.makedirs(args.checkpoint_dir)
 
+
+
+# LoRA 설정
+
+# for name, module in model.named_modules():
+#     print(name, ":", module.__class__.__name__)
+#     target_modules.
+if args.Lora:
+    lora_config = LoraConfig(
+        r=8,                 # LoRA rank
+        lora_alpha=32,       # Scaling factor
+        target_modules= ["c_attn", "q_proj", "v_proj"], # LoRA를 적용할 모듈 이름 (모델 구조에 따라 다름)
+        lora_dropout=0.1,    # Dropout 비율
+        bias="none"          # LoRA의 bias 처리 방식 ("none", "all", "lora_only")
+    )
+
+    # LoRA 적용
+    model = get_peft_model(model, lora_config)
+
+    # 모델 요약 출력 (LoRA가 잘 적용되었는지 확인)
+    model.print_trainable_parameters()
+
+model.to(device)
+
+
+
 def preprocess_text(input_text):
     prompt = f"""다음 문장을 한국어로 번역해줘.
     {input_text}
@@ -79,6 +109,7 @@ def preprocess_text(input_text):
         {"role": "system", "content": "You are a translator that translates from English to Korean."},
         {"role": "user", "content": prompt}
     ]
+
 
     # 인풋으로 받은 영어 문장+프롬프트 인코딩
     input_ids = tokenizer.apply_chat_template(
@@ -124,28 +155,48 @@ for epoch in range(wandb.config.num_epochs):
         bs, _, _ = en.size()
 
         en = en.squeeze(1)
+
+        # print(en.shape)
        
-        outputs = model.generate(
+        outputs = model(
             en.to("cuda"),
-            eos_token_id=tokenizer.eos_token_id,
-            max_new_tokens=128
+            
         )
 
-        output_list = [postprocess_text(outputs[i]) for i in range(bs)]
+        logits = outputs.logits
+        # print(outputs.logits)
+        # ret = torch.argmax(outputs.logits, dim=-1)
 
-        max_len = max([t.size(1) for t in output_list])
-        print(max_len)
-        # for t in output_list:
-        #     print(torch.nn.functional.pad(t, (0, max_len - t.size(1)), "constant", 0))
-        output_tokens= torch.stack([
-            torch.nn.functional.pad(t, (0, max_len - t.size(1)), "constant", 0) for t in output_list
-        ])
+        # output_list = [postprocess_text(ret[i]) for i in range(bs)]
+
+        # max_len = max([t.size(1) for t in output_list])
+        # # print(max_len)
+        # # for t in output_list:
+        # #     print(torch.nn.functional.pad(t, (0, max_len - t.size(1)), "constant", 0))
+        # output_tokens= torch.stack([
+        #     torch.nn.functional.pad(t, (0, max_len - t.size(1)), "constant", 0) for t in output_list
+        # ])
 
         # print(output_tokens.shape)
 
         # print(ko.shape)
+        soft_tokens = torch.nn.functional.gumbel_softmax(logits, tau=1.0, hard=False)
+
+        if soft_tokens.size(1) > 30:
+            soft_tokens = soft_tokens[:, -30:]
+        # soft_tokens = torch.clamp(soft_tokens, max=20-1)
+
+        # print(soft_tokens.shape)
+        # print(soft_tokens)
+        argmax_soft_tokens = torch.argmax(soft_tokens, dim=-1)
+        # 이제 soft_tokens는 [batch_size, seq_len, vocab_size] 형태의 연속적 확률분포
+        # 이를 directly Honorific_model에 넣어도 미분 가능
         GT_honorific = Honorific_model(ko.cuda())
-        predicted_honorific = Honorific_model(output_tokens.cuda())
+        predicted_honorific = Honorific_model(argmax_soft_tokens.long().cuda())
+
+
+        # GT_honorific = Honorific_model(ko.cuda())
+        # predicted_honorific = Honorific_model(output_tokens.cuda())
 
         # print(GT_honorific.shape)
         # print(predicted_honorific.shape)
@@ -192,7 +243,7 @@ for epoch in range(wandb.config.num_epochs):
             output_list = [postprocess_text(outputs[i]) for i in range(bs)]
 
             max_len = max([t.size(1) for t in output_list])
-            print(max_len)
+            # print(max_len)
             # for t in output_list:
             #     print(torch.nn.functional.pad(t, (0, max_len - t.size(1)), "constant", 0))
             output_tokens= torch.stack([
